@@ -1,0 +1,4 @@
+node_modules/
+.env
+sync.log
+sync-error.log
