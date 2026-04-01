@@ -1,4 +1,7 @@
+.DS_Store
 node_modules/
 .env
 sync.log
 sync-error.log
+sync-weekly-monthly.log
+sync-weekly-monthly-error.log
