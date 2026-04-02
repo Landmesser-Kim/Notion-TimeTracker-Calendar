@@ -10,6 +10,8 @@
 
 const { Client } = require("@notionhq/client");
 require("dotenv").config();
+const { createLogger } = require("./logs/logger");
+const logger = createLogger("sync-weekly-monthly");
 
 // ━━━ .env 파일에서 설정을 읽어옵니다 ━━━━━━━━━━━━━━━━━━━
 const NOTION_TOKEN = process.env.NOTION_TOKEN;
@@ -113,18 +115,25 @@ async function resolveProjectNames(entries) {
 }
 
 // ─── 날짜 유틸리티 ──────────────────────────────────────
+function toLocalDateStr(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
 function getMonday(dateStr) {
   const d = new Date(dateStr + "T00:00:00");
   const day = d.getDay();
   const diff = day === 0 ? -6 : 1 - day; // 월요일 기준
   d.setDate(d.getDate() + diff);
-  return d.toISOString().split("T")[0];
+  return toLocalDateStr(d);
 }
 
 function getSunday(mondayStr) {
   const d = new Date(mondayStr + "T00:00:00");
   d.setDate(d.getDate() + 6);
-  return d.toISOString().split("T")[0];
+  return toLocalDateStr(d);
 }
 
 function formatDateShort(dateStr) {
@@ -141,43 +150,26 @@ function getISOWeekNumber(dateStr) {
 }
 
 // ─── 주별 프로젝트별 합산 ───────────────────────────────
+// 주가 월 경계를 넘는 경우, 각 항목의 실제 날짜 기준 월로 분리하여
+// 월별 합계와 일치하도록 합니다.
 function aggregateByWeekAndProject(entries) {
   const map = {};
 
   for (const entry of entries) {
     const date = entry.startTime.split("T")[0];
     const monday = getMonday(date);
+    const month = date.slice(0, 7); // 항목의 실제 월
     const project = entry.project || "기타";
-    const key = `${monday}__${project}`;
+    const key = `${monday}__${month}__${project}`;
 
     if (!map[key]) {
-      map[key] = { weekStart: monday, project, totalMinutes: 0, entries: [] };
+      map[key] = { weekStart: monday, month, project, totalMinutes: 0, entries: [] };
     }
     map[key].totalMinutes += entry.timeMinutes;
     map[key].entries.push(entry.name);
   }
 
-  const items = Object.values(map);
-
-  // 주별 합계 추가
-  const weeklyTotals = {};
-  for (const item of items) {
-    if (!weeklyTotals[item.weekStart]) {
-      weeklyTotals[item.weekStart] = 0;
-    }
-    weeklyTotals[item.weekStart] += item.totalMinutes;
-  }
-
-  for (const [weekStart, totalMinutes] of Object.entries(weeklyTotals)) {
-    items.push({
-      weekStart,
-      project: "합계",
-      totalMinutes,
-      entries: [],
-    });
-  }
-
-  return items;
+  return Object.values(map);
 }
 
 // ─── 월별 프로젝트별 합산 ───────────────────────────────
@@ -197,27 +189,7 @@ function aggregateByMonthAndProject(entries) {
     map[key].entries.push(entry.name);
   }
 
-  const items = Object.values(map);
-
-  // 월별 합계 추가
-  const monthlyTotals = {};
-  for (const item of items) {
-    if (!monthlyTotals[item.month]) {
-      monthlyTotals[item.month] = 0;
-    }
-    monthlyTotals[item.month] += item.totalMinutes;
-  }
-
-  for (const [month, totalMinutes] of Object.entries(monthlyTotals)) {
-    items.push({
-      month,
-      project: "합계",
-      totalMinutes,
-      entries: [],
-    });
-  }
-
-  return items;
+  return Object.values(map);
 }
 
 // ─── Weekly Summary DB 자동 생성 ────────────────────────
@@ -230,6 +202,7 @@ async function createWeeklySummaryDB() {
       Name: { title: {} },
       "Week Start": { date: {} },
       Week: { rich_text: {} },
+      Month: { rich_text: {} },
       Project: {
         select: {
           options: [
@@ -238,7 +211,6 @@ async function createWeeklySummaryDB() {
             { name: "독서", color: "green" },
             { name: "외국어 - 일본어", color: "yellow" },
             { name: "외국어 - 영어", color: "purple" },
-            { name: "합계", color: "default" },
           ],
         },
       },
@@ -253,9 +225,9 @@ async function createWeeklySummaryDB() {
     },
   });
 
-  console.log(`\n✅ Weekly Summary DB 생성 완료!`);
-  console.log(`   DB ID: ${newDb.id}`);
-  console.log(`   URL: https://www.notion.so/${newDb.id.replace(/-/g, "")}`);
+  logger.log(`\n✅ Weekly Summary DB 생성 완료!`);
+  logger.log(`   DB ID: ${newDb.id}`);
+  logger.log(`   URL: https://www.notion.so/${newDb.id.replace(/-/g, "")}`);
 
   return newDb.id;
 }
@@ -278,7 +250,6 @@ async function createMonthlySummaryDB() {
             { name: "독서", color: "green" },
             { name: "외국어 - 일본어", color: "yellow" },
             { name: "외국어 - 영어", color: "purple" },
-            { name: "합계", color: "default" },
           ],
         },
       },
@@ -293,16 +264,26 @@ async function createMonthlySummaryDB() {
     },
   });
 
-  console.log(`\n✅ Monthly Summary DB 생성 완료!`);
-  console.log(`   DB ID: ${newDb.id}`);
-  console.log(`   URL: https://www.notion.so/${newDb.id.replace(/-/g, "")}`);
+  logger.log(`\n✅ Monthly Summary DB 생성 완료!`);
+  logger.log(`   DB ID: ${newDb.id}`);
+  logger.log(`   URL: https://www.notion.so/${newDb.id.replace(/-/g, "")}`);
 
   return newDb.id;
 }
 
 // ─── Weekly Summary DB에 데이터 쓰기 ────────────────────
 async function writeWeeklySummaries(dbId, summaries) {
-  console.log("🔍 Weekly: 기존 데이터 확인 중...");
+  // 기존 DB에 Month 속성이 없을 수 있으므로 추가 시도
+  try {
+    await notion.databases.update({
+      database_id: dbId,
+      properties: { Month: { rich_text: {} } },
+    });
+  } catch {
+    // 이미 존재하면 무시
+  }
+
+  logger.log("🔍 Weekly: 기존 데이터 확인 중...");
   const existingPages = {};
   let cursor = undefined;
   while (true) {
@@ -315,24 +296,42 @@ async function writeWeeklySummaries(dbId, summaries) {
     for (const page of response.results) {
       const props = page.properties;
       const weekStart = props["Week Start"]?.date?.start || "";
-      const project = props["Name"]?.title?.map((t) => t.plain_text).join("") || "";
+      const name = props["Name"]?.title?.map((t) => t.plain_text).join("") || "";
+      const month = props["Month"]?.rich_text?.map((t) => t.plain_text).join("") || "";
+      const project = props["Project"]?.select?.name || name;
       const totalMinutes = props["Total Minutes"]?.number || 0;
       const details = props["Details"]?.rich_text?.map((t) => t.plain_text).join("") || "";
       if (weekStart && project) {
-        existingPages[`${weekStart}__${project}`] = { id: page.id, totalMinutes, details };
+        // month가 있으면 새 키 형식, 없으면 레거시 (마이그레이션 대상)
+        const pageKey = month
+          ? `${weekStart}__${month}__${project}`
+          : `${weekStart}__${project}`;
+        existingPages[pageKey] = { id: page.id, name, totalMinutes, details, hasMonth: !!month };
       }
     }
 
     if (!response.has_more) break;
     cursor = response.next_cursor;
   }
-  console.log(`   기존 ${Object.keys(existingPages).length}개 항목 발견`);
+  logger.log(`   기존 ${Object.keys(existingPages).length}개 항목 발견`);
 
   const newKeys = new Set();
+  const consumedPageIds = new Set();
   let created = 0, updated = 0, skipped = 0;
 
-  for (const s of summaries) {
-    const key = `${s.weekStart}__${s.project}`;
+  // 날짜순 정렬 (같은 주 내에서는 월 → 프로젝트명 순)
+  const sorted = [...summaries].sort((a, b) =>
+    a.weekStart.localeCompare(b.weekStart) ||
+    (a.month || "").localeCompare(b.month || "") ||
+    a.project.localeCompare(b.project)
+  );
+
+  // 같은 주+월 조합의 첫 행만 날짜 표시 (월 경계를 넘는 주도 각 월별로 표시)
+  const seenWeekMonths = new Set();
+
+  for (const s of sorted) {
+    const month = s.month || s.weekStart.slice(0, 7);
+    const key = `${s.weekStart}__${month}__${s.project}`;
     newKeys.add(key);
 
     const sunday = getSunday(s.weekStart);
@@ -342,36 +341,44 @@ async function writeWeeklySummaries(dbId, summaries) {
     const weekDisplay = `${year} W${String(weekNum).padStart(2, "0")} (${weekLabel})`;
     const details = [...new Set(s.entries)].join(", ");
 
-    const existing = existingPages[key];
+    const weekMonthKey = `${s.weekStart}__${month}`;
+    const isFirst = !seenWeekMonths.has(weekMonthKey);
+    seenWeekMonths.add(weekMonthKey);
+    const nameValue = isFirst ? weekDisplay : "\u3164";
+
+    const props = {
+      Name: { title: [{ text: { content: nameValue } }] },
+      "Week Start": { date: { start: s.weekStart, end: sunday } },
+      Week: { rich_text: [{ text: { content: weekDisplay } }] },
+      Month: { rich_text: [{ text: { content: month } }] },
+      Project: { select: { name: s.project } },
+      "Total Minutes": { number: s.totalMinutes },
+      Details: { rich_text: [{ text: { content: details.slice(0, 2000) } }] },
+    };
+
+    // 새 키로 먼저 찾고, 없으면 레거시 키로 시도 (이미 사용된 페이지는 제외)
+    const legacyKey = `${s.weekStart}__${s.project}`;
+    let existing = existingPages[key];
+    let matchedKey = key;
+    if (!existing || consumedPageIds.has(existing.id)) {
+      existing = existingPages[legacyKey];
+      matchedKey = legacyKey;
+    }
+    if (existing && consumedPageIds.has(existing.id)) {
+      existing = null;
+    }
+
     if (existing) {
-      if (existing.totalMinutes === s.totalMinutes && existing.details === details.slice(0, 2000)) {
+      consumedPageIds.add(existing.id);
+      newKeys.add(matchedKey);
+      if (existing.hasMonth && existing.name === nameValue && existing.totalMinutes === s.totalMinutes && existing.details === details.slice(0, 2000)) {
         skipped++;
         continue;
       }
-      await notion.pages.update({
-        page_id: existing.id,
-        properties: {
-          Name: { title: [{ text: { content: s.project } }] },
-          "Week Start": { date: { start: s.weekStart } },
-          Week: { rich_text: [{ text: { content: weekDisplay } }] },
-          Project: { select: { name: s.project } },
-          "Total Minutes": { number: s.totalMinutes },
-          Details: { rich_text: [{ text: { content: details.slice(0, 2000) } }] },
-        },
-      });
+      await notion.pages.update({ page_id: existing.id, properties: props });
       updated++;
     } else {
-      await notion.pages.create({
-        parent: { database_id: dbId },
-        properties: {
-          Name: { title: [{ text: { content: s.project } }] },
-          "Week Start": { date: { start: s.weekStart } },
-          Week: { rich_text: [{ text: { content: weekDisplay } }] },
-          Project: { select: { name: s.project } },
-          "Total Minutes": { number: s.totalMinutes },
-          Details: { rich_text: [{ text: { content: details.slice(0, 2000) } }] },
-        },
-      });
+      await notion.pages.create({ parent: { database_id: dbId }, properties: props });
       created++;
     }
   }
@@ -384,12 +391,12 @@ async function writeWeeklySummaries(dbId, summaries) {
     }
   }
 
-  console.log(`✅ Weekly 동기화 완료: ${created}개 생성, ${updated}개 업데이트, ${skipped}개 변경없음, ${removed}개 삭제`);
+  logger.log(`✅ Weekly 동기화 완료: ${created}개 생성, ${updated}개 업데이트, ${skipped}개 변경없음, ${removed}개 삭제`);
 }
 
 // ─── Monthly Summary DB에 데이터 쓰기 ───────────────────
 async function writeMonthlySummaries(dbId, summaries) {
-  console.log("🔍 Monthly: 기존 데이터 확인 중...");
+  logger.log("🔍 Monthly: 기존 데이터 확인 중...");
   const existingPages = {};
   let cursor = undefined;
   while (true) {
@@ -402,18 +409,19 @@ async function writeMonthlySummaries(dbId, summaries) {
     for (const page of response.results) {
       const props = page.properties;
       const monthStart = props["Month Start"]?.date?.start || "";
-      const project = props["Name"]?.title?.map((t) => t.plain_text).join("") || "";
+      const name = props["Name"]?.title?.map((t) => t.plain_text).join("") || "";
+      const project = props["Project"]?.select?.name || name;
       const totalMinutes = props["Total Minutes"]?.number || 0;
       const details = props["Details"]?.rich_text?.map((t) => t.plain_text).join("") || "";
       if (monthStart && project) {
-        existingPages[`${monthStart}__${project}`] = { id: page.id, totalMinutes, details };
+        existingPages[`${monthStart}__${project}`] = { id: page.id, name, totalMinutes, details };
       }
     }
 
     if (!response.has_more) break;
     cursor = response.next_cursor;
   }
-  console.log(`   기존 ${Object.keys(existingPages).length}개 항목 발견`);
+  logger.log(`   기존 ${Object.keys(existingPages).length}개 항목 발견`);
 
   const newKeys = new Set();
   let created = 0, updated = 0, skipped = 0;
@@ -424,7 +432,14 @@ async function writeMonthlySummaries(dbId, summaries) {
     "09": "9월", "10": "10월", "11": "11월", "12": "12월",
   };
 
-  for (const s of summaries) {
+  // 날짜순 정렬 (같은 월 내에서는 프로젝트명 순)
+  const sorted = [...summaries].sort((a, b) =>
+    a.month.localeCompare(b.month) || a.project.localeCompare(b.project)
+  );
+
+  const seenMonths = new Set();
+
+  for (const s of sorted) {
     const monthStart = `${s.month}-01`;
     const key = `${monthStart}__${s.project}`;
     newKeys.add(key);
@@ -434,36 +449,30 @@ async function writeMonthlySummaries(dbId, summaries) {
     const monthDisplay = `${year}년 ${monthNames[mm]}`;
     const details = [...new Set(s.entries)].join(", ");
 
+    // 같은 월의 첫 행만 날짜 표시, 나머지는 비움
+    const isFirst = !seenMonths.has(s.month);
+    seenMonths.add(s.month);
+    const nameValue = isFirst ? monthDisplay : "\u3164";
+
+    const props = {
+      Name: { title: [{ text: { content: nameValue } }] },
+      "Month Start": { date: { start: monthStart } },
+      Month: { rich_text: [{ text: { content: monthDisplay } }] },
+      Project: { select: { name: s.project } },
+      "Total Minutes": { number: s.totalMinutes },
+      Details: { rich_text: [{ text: { content: details.slice(0, 2000) } }] },
+    };
+
     const existing = existingPages[key];
     if (existing) {
-      if (existing.totalMinutes === s.totalMinutes && existing.details === details.slice(0, 2000)) {
+      if (existing.name === nameValue && existing.totalMinutes === s.totalMinutes && existing.details === details.slice(0, 2000)) {
         skipped++;
         continue;
       }
-      await notion.pages.update({
-        page_id: existing.id,
-        properties: {
-          Name: { title: [{ text: { content: s.project } }] },
-          "Month Start": { date: { start: monthStart } },
-          Month: { rich_text: [{ text: { content: monthDisplay } }] },
-          Project: { select: { name: s.project } },
-          "Total Minutes": { number: s.totalMinutes },
-          Details: { rich_text: [{ text: { content: details.slice(0, 2000) } }] },
-        },
-      });
+      await notion.pages.update({ page_id: existing.id, properties: props });
       updated++;
     } else {
-      await notion.pages.create({
-        parent: { database_id: dbId },
-        properties: {
-          Name: { title: [{ text: { content: s.project } }] },
-          "Month Start": { date: { start: monthStart } },
-          Month: { rich_text: [{ text: { content: monthDisplay } }] },
-          Project: { select: { name: s.project } },
-          "Total Minutes": { number: s.totalMinutes },
-          Details: { rich_text: [{ text: { content: details.slice(0, 2000) } }] },
-        },
-      });
+      await notion.pages.create({ parent: { database_id: dbId }, properties: props });
       created++;
     }
   }
@@ -476,42 +485,43 @@ async function writeMonthlySummaries(dbId, summaries) {
     }
   }
 
-  console.log(`✅ Monthly 동기화 완료: ${created}개 생성, ${updated}개 업데이트, ${skipped}개 변경없음, ${removed}개 삭제`);
+  logger.log(`✅ Monthly 동기화 완료: ${created}개 생성, ${updated}개 업데이트, ${skipped}개 변경없음, ${removed}개 삭제`);
 }
 
 // ─── 메인 ────────────────────────────────────────────────
 async function main() {
   try {
-    console.log("═══════════════════════════════════════════");
-    console.log("  📊 Time Tracker → Weekly / Monthly Summary");
-    console.log("═══════════════════════════════════════════\n");
+    logger.log("═══════════════════════════════════════════");
+    logger.log("  📊 Time Tracker → Weekly / Monthly Summary");
+    logger.log("═══════════════════════════════════════════\n");
 
-    console.log("🔍 Time Tracker 데이터 가져오는 중...");
+    logger.log("🔍 Time Tracker 데이터 가져오는 중...");
     let entries = await fetchAllTimeEntries();
-    console.log(`   ${entries.length}개 항목 발견`);
+    logger.log(`   ${entries.length}개 항목 발견`);
 
     if (entries.length === 0) {
-      console.log("⚠️  항목이 없습니다. DB ID와 연결 상태를 확인하세요.");
+      logger.log("⚠️  항목이 없습니다. DB ID와 연결 상태를 확인하세요.");
       return;
     }
 
-    console.log("🏷️  프로젝트 이름 확인 중...");
+    logger.log("🏷️  프로젝트 이름 확인 중...");
     entries = await resolveProjectNames(entries);
 
     const withTime = entries.filter((e) => e.timeMinutes > 0);
     const zeroTime = entries.filter((e) => e.timeMinutes === 0);
-    console.log(`   ✅ 시간 있는 항목: ${withTime.length}개`);
+    logger.log(`   ✅ 시간 있는 항목: ${withTime.length}개`);
     if (zeroTime.length > 0) {
-      console.log(`   ⚠️  시간이 0인 항목: ${zeroTime.length}개`);
+      logger.log(`   ⚠️  시간이 0인 항목: ${zeroTime.length}개`);
     }
 
     // ── Weekly Summary ──
-    console.log("\n📅 주별 프로젝트별 합산 중...");
+    logger.log("\n📅 주별 프로젝트별 합산 중...");
     const weeklySummaries = aggregateByWeekAndProject(entries);
-    console.log(`   ${weeklySummaries.length}개 주별 요약 생성`);
+    logger.log(`   ${weeklySummaries.length}개 주별 요약 생성`);
 
-    console.log("\n📅 최근 주별 데이터 미리보기:");
+    logger.log("\n📅 최근 주별 데이터 미리보기:");
     weeklySummaries
+      .filter((s) => s.project !== "합계")
       .sort((a, b) => b.weekStart.localeCompare(a.weekStart))
       .slice(0, 10)
       .forEach((s) => {
@@ -519,71 +529,75 @@ async function main() {
         const m = s.totalMinutes % 60;
         const sunday = getSunday(s.weekStart);
         const label = `${formatDateShort(s.weekStart)}~${formatDateShort(sunday)}`;
-        console.log(
-          `   ${label}  ${s.project.padEnd(15)} ${h}h ${String(m).padStart(2, "0")}m`
+        const monthTag = s.month ? ` [${s.month}]` : "";
+        logger.log(
+          `   ${label}${monthTag}  ${s.project.padEnd(15)} ${h}h ${String(m).padStart(2, "0")}m`
         );
       });
 
     // ── Monthly Summary ──
-    console.log("\n📆 월별 프로젝트별 합산 중...");
+    logger.log("\n📆 월별 프로젝트별 합산 중...");
     const monthlySummaries = aggregateByMonthAndProject(entries);
-    console.log(`   ${monthlySummaries.length}개 월별 요약 생성`);
+    logger.log(`   ${monthlySummaries.length}개 월별 요약 생성`);
 
-    console.log("\n📆 월별 데이터 미리보기:");
+    logger.log("\n📆 월별 데이터 미리보기:");
     monthlySummaries
+      .filter((s) => s.project !== "합계")
       .sort((a, b) => b.month.localeCompare(a.month))
       .slice(0, 10)
       .forEach((s) => {
         const h = Math.floor(s.totalMinutes / 60);
         const m = s.totalMinutes % 60;
-        console.log(
+        logger.log(
           `   ${s.month}     ${s.project.padEnd(15)} ${h}h ${String(m).padStart(2, "0")}m`
         );
       });
 
     // ── DB 생성 (최초 실행 시) ──
     if (!WEEKLY_SUMMARY_DB_ID) {
-      console.log("\n🔨 Weekly Summary DB 생성 중...");
+      logger.log("\n🔨 Weekly Summary DB 생성 중...");
       WEEKLY_SUMMARY_DB_ID = await createWeeklySummaryDB();
     }
 
     if (!MONTHLY_SUMMARY_DB_ID) {
-      console.log("\n🔨 Monthly Summary DB 생성 중...");
+      logger.log("\n🔨 Monthly Summary DB 생성 중...");
       MONTHLY_SUMMARY_DB_ID = await createMonthlySummaryDB();
     }
 
     // ── 동기화 ──
-    console.log("");
+    logger.log("");
     await writeWeeklySummaries(WEEKLY_SUMMARY_DB_ID, weeklySummaries);
-    console.log("");
+    logger.log("");
     await writeMonthlySummaries(MONTHLY_SUMMARY_DB_ID, monthlySummaries);
 
-    console.log("\n🎉 동기화 완료!");
-    console.log(`   📅 Weekly:  https://www.notion.so/${WEEKLY_SUMMARY_DB_ID.replace(/-/g, "")}`);
-    console.log(`   📆 Monthly: https://www.notion.so/${MONTHLY_SUMMARY_DB_ID.replace(/-/g, "")}`);
+    logger.log("\n🎉 동기화 완료!");
+    logger.log(`   📅 Weekly:  https://www.notion.so/${WEEKLY_SUMMARY_DB_ID.replace(/-/g, "")}`);
+    logger.log(`   📆 Monthly: https://www.notion.so/${MONTHLY_SUMMARY_DB_ID.replace(/-/g, "")}`);
 
     // DB ID 저장 안내
     if (!process.env.WEEKLY_SUMMARY_DB_ID || !process.env.MONTHLY_SUMMARY_DB_ID) {
-      console.log("\n   💡 .env 파일에 아래 ID를 추가하세요:");
+      logger.log("\n   💡 .env 파일에 아래 ID를 추가하세요:");
       if (!process.env.WEEKLY_SUMMARY_DB_ID) {
-        console.log(`      WEEKLY_SUMMARY_DB_ID=${WEEKLY_SUMMARY_DB_ID}`);
+        logger.log(`      WEEKLY_SUMMARY_DB_ID=${WEEKLY_SUMMARY_DB_ID}`);
       }
       if (!process.env.MONTHLY_SUMMARY_DB_ID) {
-        console.log(`      MONTHLY_SUMMARY_DB_ID=${MONTHLY_SUMMARY_DB_ID}`);
+        logger.log(`      MONTHLY_SUMMARY_DB_ID=${MONTHLY_SUMMARY_DB_ID}`);
       }
     }
 
-    console.log("\n📌 Notion에서 보기 설정:");
-    console.log('   1. 테이블 뷰 → Project로 그룹화하면 프로젝트별 시간 한눈에 확인');
-    console.log('   2. 차트 뷰 → Total Minutes 기준으로 프로젝트별 비교 가능');
+    logger.log("\n📌 Notion에서 보기 설정:");
+    logger.log('   1. 테이블 뷰 → Project로 그룹화하면 프로젝트별 시간 한눈에 확인');
+    logger.log('   2. 차트 뷰 → Total Minutes 기준으로 프로젝트별 비교 가능');
   } catch (error) {
-    console.error("\n❌ 오류 발생:", error.message);
+    logger.error("\n❌ 오류 발생:", error.message);
     if (error.code === "unauthorized") {
-      console.error("   → 시크릿 키가 올바른지 확인하세요.");
+      logger.error("   → 시크릿 키가 올바른지 확인하세요.");
     }
     if (error.code === "object_not_found") {
-      console.error("   → DB ID가 올바른지, 통합이 연결되어 있는지 확인하세요.");
+      logger.error("   → DB ID가 올바른지, 통합이 연결되어 있는지 확인하세요.");
     }
+  } finally {
+    logger.close();
   }
 }
 

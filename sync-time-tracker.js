@@ -12,6 +12,8 @@
 
 const { Client } = require("@notionhq/client");
 require("dotenv").config();
+const { createLogger } = require("./logs/logger");
+const logger = createLogger("sync-daily");
 
 // ━━━ .env 파일에서 설정을 읽어옵니다 ━━━━━━━━━━━━━━━━━━━
 const NOTION_TOKEN = process.env.NOTION_TOKEN;
@@ -189,11 +191,11 @@ async function createDailySummaryDB() {
     },
   });
 
-  console.log(`\n✅ Daily Summary DB 생성 완료!`);
-  console.log(`   DB ID: ${newDb.id}`);
-  console.log(`   URL: https://www.notion.so/${newDb.id.replace(/-/g, "")}`);
-  console.log(`\n   💡 다음 실행부터는 스크립트 상단의 DAILY_SUMMARY_DB_ID에`);
-  console.log(`      "${newDb.id}" 를 넣어주세요.\n`);
+  logger.log(`\n✅ Daily Summary DB 생성 완료!`);
+  logger.log(`   DB ID: ${newDb.id}`);
+  logger.log(`   URL: https://www.notion.so/${newDb.id.replace(/-/g, "")}`);
+  logger.log(`\n   💡 다음 실행부터는 스크립트 상단의 DAILY_SUMMARY_DB_ID에`);
+  logger.log(`      "${newDb.id}" 를 넣어주세요.\n`);
 
   return newDb.id;
 }
@@ -201,7 +203,7 @@ async function createDailySummaryDB() {
 // ─── Daily Summary DB에 데이터 쓰기 (업데이트 방식) ──────
 async function writeSummaries(dbId, summaries) {
   // 1. 기존 페이지를 날짜+프로젝트 키로 매핑
-  console.log("🔍 기존 데이터 확인 중...");
+  logger.log("🔍 기존 데이터 확인 중...");
   const existingPages = {};
   let cursor = undefined;
   while (true) {
@@ -225,7 +227,7 @@ async function writeSummaries(dbId, summaries) {
     if (!response.has_more) break;
     cursor = response.next_cursor;
   }
-  console.log(`   기존 ${Object.keys(existingPages).length}개 항목 발견`);
+  logger.log(`   기존 ${Object.keys(existingPages).length}개 항목 발견`);
 
   // 2. 변경된 항목만 처리
   const newKeys = new Set();
@@ -280,76 +282,78 @@ async function writeSummaries(dbId, summaries) {
     }
   }
 
-  console.log(`✅ 동기화 완료: ${created}개 생성, ${updated}개 업데이트, ${skipped}개 변경없음, ${removed}개 삭제`);
+  logger.log(`✅ 동기화 완료: ${created}개 생성, ${updated}개 업데이트, ${skipped}개 변경없음, ${removed}개 삭제`);
 }
 
 // ─── 메인 ────────────────────────────────────────────────
 async function main() {
   try {
-    console.log("═══════════════════════════════════════");
-    console.log("  📊 Time Tracker → Daily Summary 동기화");
-    console.log("═══════════════════════════════════════\n");
+    logger.log("═══════════════════════════════════════");
+    logger.log("  📊 Time Tracker → Daily Summary 동기화");
+    logger.log("═══════════════════════════════════════\n");
 
-    console.log("🔍 Time Tracker 데이터 가져오는 중...");
+    logger.log("🔍 Time Tracker 데이터 가져오는 중...");
     let entries = await fetchAllTimeEntries();
-    console.log(`   ${entries.length}개 항목 발견`);
+    logger.log(`   ${entries.length}개 항목 발견`);
 
     if (entries.length === 0) {
-      console.log("⚠️  항목이 없습니다. DB ID와 연결 상태를 확인하세요.");
+      logger.log("⚠️  항목이 없습니다. DB ID와 연결 상태를 확인하세요.");
       return;
     }
 
-    console.log("🏷️  프로젝트 이름 확인 중...");
+    logger.log("🏷️  프로젝트 이름 확인 중...");
     entries = await resolveProjectNames(entries);
 
     const withTime = entries.filter((e) => e.timeMinutes > 0);
     const zeroTime = entries.filter((e) => e.timeMinutes === 0);
-    console.log(`   ✅ 시간 있는 항목: ${withTime.length}개`);
+    logger.log(`   ✅ 시간 있는 항목: ${withTime.length}개`);
     if (zeroTime.length > 0) {
-      console.log(`   ⚠️  시간이 0인 항목: ${zeroTime.length}개`);
+      logger.log(`   ⚠️  시간이 0인 항목: ${zeroTime.length}개`);
     }
 
-    console.log("📊 일별 프로젝트별 합산 중...");
+    logger.log("📊 일별 프로젝트별 합산 중...");
     const summaries = aggregateByDayAndProject(entries);
-    console.log(`   ${summaries.length}개 일별 요약 생성\n`);
+    logger.log(`   ${summaries.length}개 일별 요약 생성\n`);
 
-    console.log("📅 최근 데이터 미리보기:");
+    logger.log("📅 최근 데이터 미리보기:");
     summaries
       .sort((a, b) => b.date.localeCompare(a.date))
       .slice(0, 10)
       .forEach((s) => {
         const h = Math.floor(s.totalMinutes / 60);
         const m = s.totalMinutes % 60;
-        console.log(
+        logger.log(
           `   ${s.date}  ${s.project.padEnd(15)} ${h}h ${String(m).padStart(2, "0")}m`
         );
       });
 
     if (!DAILY_SUMMARY_DB_ID) {
-      console.log("\n🔨 Daily Summary DB 생성 중...");
+      logger.log("\n🔨 Daily Summary DB 생성 중...");
       DAILY_SUMMARY_DB_ID = await createDailySummaryDB();
     }
 
-    console.log("");
+    logger.log("");
     await writeSummaries(DAILY_SUMMARY_DB_ID, summaries);
 
-    console.log("\n🎉 동기화 완료!");
-    console.log(
+    logger.log("\n🎉 동기화 완료!");
+    logger.log(
       `   👉 https://www.notion.so/${DAILY_SUMMARY_DB_ID.replace(/-/g, "")}`
     );
-    console.log("\n📌 캘린더 뷰 설정:");
-    console.log('   1. Daily Summary DB → "+" 새 뷰 추가 → 캘린더');
-    console.log('   2. 레이아웃 → 캘린더 표시 기준 → "Date"');
-    console.log('   3. 속성 표시 → "Project", "Time Display" 켜기');
-    console.log("   4. 조건부 색상 → Project별 색상 지정하면 완성!");
+    logger.log("\n📌 캘린더 뷰 설정:");
+    logger.log('   1. Daily Summary DB → "+" 새 뷰 추가 → 캘린더');
+    logger.log('   2. 레이아웃 → 캘린더 표시 기준 → "Date"');
+    logger.log('   3. 속성 표시 → "Project", "Time Display" 켜기');
+    logger.log("   4. 조건부 색상 → Project별 색상 지정하면 완성!");
   } catch (error) {
-    console.error("\n❌ 오류 발생:", error.message);
+    logger.error("\n❌ 오류 발생:", error.message);
     if (error.code === "unauthorized") {
-      console.error("   → 시크릿 키가 올바른지 확인하세요.");
+      logger.error("   → 시크릿 키가 올바른지 확인하세요.");
     }
     if (error.code === "object_not_found") {
-      console.error("   → DB ID가 올바른지, 통합이 연결되어 있는지 확인하세요.");
+      logger.error("   → DB ID가 올바른지, 통합이 연결되어 있는지 확인하세요.");
     }
+  } finally {
+    logger.close();
   }
 }
 
