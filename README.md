@@ -29,15 +29,24 @@ NOTION_TOKEN=your_notion_token
 TIME_TRACKER_DB_ID=your_time_tracker_db_id
 PARENT_PAGE_ID=your_parent_page_id
 DAILY_SUMMARY_DB_ID=처음 실행 후 자동 생성된 ID 입력
+ALL_TIME_SUMMARY_DB_ID=처음 실행 후 자동 생성된 ID 입력
 ```
 
 ### 3. 수동 실행
 
 ```bash
-node sync-time-tracker.js
+node sync-daily-time-tracker.js
 ```
 
 첫 실행 시 Daily Summary DB가 자동 생성됩니다. 콘솔에 출력되는 DB ID를 `.env`의 `DAILY_SUMMARY_DB_ID`에 입력하세요.
+
+프로젝트별 누적 시간을 위한 All Time DB를 만들 때는 아래 명령어를 실행하세요.
+
+```bash
+node sync-all-time.js
+```
+
+첫 실행 시 All Time DB가 자동 생성됩니다. 콘솔에 출력되는 DB ID를 `.env`의 `ALL_TIME_SUMMARY_DB_ID`에 입력하세요.
 
 ## 자동 실행 (launchd)
 
@@ -64,10 +73,16 @@ launchctl list | grep notion
 
 ```bash
 # 실행 로그
-cat sync.log
+cat logs/sync-daily.log
 
 # 에러 로그
-cat sync-error.log
+cat logs/sync-daily-error.log
+
+# All Time 실행 로그
+cat logs/sync-all-time.log
+
+# All Time 에러 로그
+cat logs/sync-all-time-error.log
 ```
 
 ## Notion 캘린더 뷰 설정
@@ -81,7 +96,8 @@ cat sync-error.log
 
 | 파일 | 설명 |
 |------|------|
-| `sync-time-tracker.js` | 메인 동기화 스크립트 |
+| `sync-daily-time-tracker.js` | 메인 동기화 스크립트 |
+| `sync-all-time.js` | 프로젝트별 누적 시간 동기화 스크립트 |
 | `find-databases.js` | 접근 가능한 DB 목록 조회 (유틸리티) |
 | `inspect-time.js` | Time Tracker 속성 구조 확인 (유틸리티) |
 | `.env` | 토큰, DB ID 등 환경변수 (git 제외) |

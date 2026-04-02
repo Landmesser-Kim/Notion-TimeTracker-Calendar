@@ -4,7 +4,7 @@ const path = require("path");
 const LOGS_DIR = __dirname;
 
 /**
- * 로그 파일에 기록하면서 동시에 콘솔에도 출력하는 로거를 생성합니다.
+ * 로그 파일에 기록하면서  동시에 콘솔에도 출력하는 로거를 생성합니다.
  *
  * @param {string} name - 로그 파일 이름 (예: "sync-daily" → sync-daily.log, sync-daily-error.log)
  * @returns {{ log, error, close }}

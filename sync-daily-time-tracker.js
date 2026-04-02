@@ -4,7 +4,7 @@
  * 사용법:
  *   1. Node.js 설치 (https://nodejs.org)
  *   2. npm install @notionhq/client@2.2.15
- *   3. node sync-time-tracker.js
+ *   3. node sync-daily-time-tracker.js
  *
  * 처음 실행하면 Daily Summary DB가 자동 생성됩니다.
  * 이후 실행하면 기존 데이터를 지우고 최신 데이터로 갱신합니다.

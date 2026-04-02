@@ -150,15 +150,15 @@ function getISOWeekNumber(dateStr) {
 }
 
 // ─── 주별 프로젝트별 합산 ───────────────────────────────
-// 주가 월 경계를 넘는 경우, 각 항목의 실제 날짜 기준 월로 분리하여
-// 월별 합계와 일치하도록 합니다.
+// 주가 월 경계를 넘는 경우에도, 해당 주의 월은 Week Start 기준으로 고정합니다.
+// 예: 2026-03-30 주차의 4월 1일 작업도 Month는 2026-03으로 집계됩니다.
 function aggregateByWeekAndProject(entries) {
   const map = {};
 
   for (const entry of entries) {
     const date = entry.startTime.split("T")[0];
     const monday = getMonday(date);
-    const month = date.slice(0, 7); // 항목의 실제 월
+    const month = monday.slice(0, 7);
     const project = entry.project || "기타";
     const key = `${monday}__${month}__${project}`;
 
@@ -285,6 +285,7 @@ async function writeWeeklySummaries(dbId, summaries) {
 
   logger.log("🔍 Weekly: 기존 데이터 확인 중...");
   const existingPages = {};
+  const duplicatePages = new Set();
   let cursor = undefined;
   while (true) {
     const response = await notion.databases.query({
@@ -302,11 +303,22 @@ async function writeWeeklySummaries(dbId, summaries) {
       const totalMinutes = props["Total Minutes"]?.number || 0;
       const details = props["Details"]?.rich_text?.map((t) => t.plain_text).join("") || "";
       if (weekStart && project) {
-        // month가 있으면 새 키 형식, 없으면 레거시 (마이그레이션 대상)
         const pageKey = month
           ? `${weekStart}__${month}__${project}`
           : `${weekStart}__${project}`;
-        existingPages[pageKey] = { id: page.id, name, totalMinutes, details, hasMonth: !!month };
+
+        if (existingPages[pageKey]) {
+          duplicatePages.add(page.id);
+          continue;
+        }
+
+        existingPages[pageKey] = {
+          id: page.id,
+          name,
+          totalMinutes,
+          details,
+          hasMonth: !!month,
+        };
       }
     }
 
@@ -326,8 +338,8 @@ async function writeWeeklySummaries(dbId, summaries) {
     a.project.localeCompare(b.project)
   );
 
-  // 같은 주+월 조합의 첫 행만 날짜 표시 (월 경계를 넘는 주도 각 월별로 표시)
-  const seenWeekMonths = new Set();
+  // 같은 주의 첫 행만 날짜 표시
+  const seenWeeks = new Set();
 
   for (const s of sorted) {
     const month = s.month || s.weekStart.slice(0, 7);
@@ -341,9 +353,8 @@ async function writeWeeklySummaries(dbId, summaries) {
     const weekDisplay = `${year} W${String(weekNum).padStart(2, "0")} (${weekLabel})`;
     const details = [...new Set(s.entries)].join(", ");
 
-    const weekMonthKey = `${s.weekStart}__${month}`;
-    const isFirst = !seenWeekMonths.has(weekMonthKey);
-    seenWeekMonths.add(weekMonthKey);
+    const isFirst = !seenWeeks.has(s.weekStart);
+    seenWeeks.add(s.weekStart);
     const nameValue = isFirst ? weekDisplay : "\u3164";
 
     const props = {
@@ -356,14 +367,15 @@ async function writeWeeklySummaries(dbId, summaries) {
       Details: { rich_text: [{ text: { content: details.slice(0, 2000) } }] },
     };
 
-    // 새 키로 먼저 찾고, 없으면 레거시 키로 시도 (이미 사용된 페이지는 제외)
     const legacyKey = `${s.weekStart}__${s.project}`;
     let existing = existingPages[key];
     let matchedKey = key;
+
     if (!existing || consumedPageIds.has(existing.id)) {
       existing = existingPages[legacyKey];
       matchedKey = legacyKey;
     }
+
     if (existing && consumedPageIds.has(existing.id)) {
       existing = null;
     }
@@ -371,7 +383,13 @@ async function writeWeeklySummaries(dbId, summaries) {
     if (existing) {
       consumedPageIds.add(existing.id);
       newKeys.add(matchedKey);
-      if (existing.hasMonth && existing.name === nameValue && existing.totalMinutes === s.totalMinutes && existing.details === details.slice(0, 2000)) {
+
+      if (
+        existing.hasMonth &&
+        existing.name === nameValue &&
+        existing.totalMinutes === s.totalMinutes &&
+        existing.details === details.slice(0, 2000)
+      ) {
         skipped++;
         continue;
       }
@@ -389,6 +407,11 @@ async function writeWeeklySummaries(dbId, summaries) {
       await notion.pages.update({ page_id: page.id, archived: true });
       removed++;
     }
+  }
+
+  for (const pageId of duplicatePages) {
+    await notion.pages.update({ page_id: pageId, archived: true });
+    removed++;
   }
 
   logger.log(`✅ Weekly 동기화 완료: ${created}개 생성, ${updated}개 업데이트, ${skipped}개 변경없음, ${removed}개 삭제`);
