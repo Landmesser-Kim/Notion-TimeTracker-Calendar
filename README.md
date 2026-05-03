@@ -73,16 +73,22 @@ launchctl list | grep notion
 
 ```bash
 # 실행 로그
-cat logs/sync-daily.log
+cat logs/active/sync-daily.log
 
 # 에러 로그
-cat logs/sync-daily-error.log
+cat logs/active/sync-daily-error.log
 
 # All Time 실행 로그
-cat logs/sync-all-time.log
+cat logs/active/sync-all-time.log
 
 # All Time 에러 로그
-cat logs/sync-all-time-error.log
+cat logs/active/sync-all-time-error.log
+
+# Weekly/Monthly 실행 로그
+cat logs/active/sync-weekly-monthly.log
+
+# Weekly/Monthly 에러 로그
+cat logs/active/sync-weekly-monthly-error.log
 ```
 
 ## Notion 캘린더 뷰 설정

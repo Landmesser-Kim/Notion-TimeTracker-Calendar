@@ -22,6 +22,50 @@ let ALL_TIME_SUMMARY_DB_ID = process.env.ALL_TIME_SUMMARY_DB_ID || "";
 
 const notion = new Client({ auth: NOTION_TOKEN });
 
+// ─── 단일 페이지 파싱 ───────────────────────────────────
+function parseEntry(page) {
+  const props = page.properties;
+
+  const name =
+    props["Name"]?.title?.map((t) => t.plain_text).join("") || "";
+  const startTime = props["Start time"]?.date?.start || null;
+
+  let timeMinutes = 0;
+  const totalTimeProp = props["Total time "] || props["Total time"];
+  if (totalTimeProp) {
+    if (totalTimeProp.type === "formula") {
+      timeMinutes = totalTimeProp.formula?.number || 0;
+    } else if (totalTimeProp.type === "number") {
+      timeMinutes = totalTimeProp.number || 0;
+    }
+  }
+
+  if (
+    !timeMinutes &&
+    props["Start time"]?.date?.start &&
+    props["End time"]?.date?.start
+  ) {
+    const start = new Date(props["Start time"].date.start);
+    const end = new Date(props["End time"].date.start);
+    const diffMs = end - start;
+    if (diffMs > 0) {
+      timeMinutes = Math.round(diffMs / 60000);
+    }
+  }
+
+  let project = "";
+  const projectsProp = props["Projects"];
+  if (projectsProp?.relation?.length > 0) {
+    project = projectsProp.relation[0].id;
+  } else if (projectsProp?.select) {
+    project = projectsProp.select.name || "";
+  } else if (projectsProp?.multi_select?.length > 0) {
+    project = projectsProp.multi_select[0].name || "";
+  }
+
+  return { id: page.id, name, startTime, timeMinutes, project };
+}
+
 // ─── Time Tracker에서 모든 항목 가져오기 ─────────────────
 async function fetchAllTimeEntries() {
   const entries = [];
@@ -35,48 +79,8 @@ async function fetchAllTimeEntries() {
     });
 
     for (const page of response.results) {
-      const props = page.properties;
-
-      const name =
-        props["Name"]?.title?.map((t) => t.plain_text).join("") || "";
-      const startTime = props["Start time"]?.date?.start || null;
-
-      let timeMinutes = 0;
-      const totalTimeProp = props["Total time "] || props["Total time"];
-      if (totalTimeProp) {
-        if (totalTimeProp.type === "formula") {
-          timeMinutes = totalTimeProp.formula?.number || 0;
-        } else if (totalTimeProp.type === "number") {
-          timeMinutes = totalTimeProp.number || 0;
-        }
-      }
-
-      if (
-        !timeMinutes &&
-        props["Start time"]?.date?.start &&
-        props["End time"]?.date?.start
-      ) {
-        const start = new Date(props["Start time"].date.start);
-        const end = new Date(props["End time"].date.start);
-        const diffMs = end - start;
-        if (diffMs > 0) {
-          timeMinutes = Math.round(diffMs / 60000);
-        }
-      }
-
-      let project = "";
-      const projectsProp = props["Projects"];
-      if (projectsProp?.relation?.length > 0) {
-        project = projectsProp.relation[0].id;
-      } else if (projectsProp?.select) {
-        project = projectsProp.select.name || "";
-      } else if (projectsProp?.multi_select?.length > 0) {
-        project = projectsProp.multi_select[0].name || "";
-      }
-
-      if (startTime) {
-        entries.push({ name, startTime, timeMinutes, project });
-      }
+      const entry = parseEntry(page);
+      if (entry.startTime) entries.push(entry);
     }
 
     if (!response.has_more) break;
@@ -159,7 +163,13 @@ async function createAllTimeSummaryDB() {
             { name: "수학", color: "red" },
             { name: "독서", color: "green" },
             { name: "외국어 - 일본어", color: "yellow" },
-            { name: "외국어 - 영어", color: "purple" },
+            { name: "외국어 - 영어", color: "yellow" },
+            { name: "AI 활용", color: "orange" },
+            { name: "사람 만남", color: "pink" },
+            { name: "학원", color: "gray" },
+            { name: "적극적 시청", color: "brown" },
+            { name: "영상 작품 시청", color: "purple" },
+            { name: "운동", color: "default" },
             { name: "기타", color: "brown" },
             { name: "합계", color: "default" },
           ],

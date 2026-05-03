@@ -1,7 +1,11 @@
 const fs = require("fs");
 const path = require("path");
 
-const LOGS_DIR = __dirname;
+const LOGS_DIR = path.join(__dirname, "active");
+
+if (!fs.existsSync(LOGS_DIR)) {
+  fs.mkdirSync(LOGS_DIR, { recursive: true });
+}
 
 /**
  * 로그 파일에 기록하면서  동시에 콘솔에도 출력하는 로거를 생성합니다.
